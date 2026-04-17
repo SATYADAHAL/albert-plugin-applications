@@ -100,8 +100,8 @@
        </property>
       </widget>
      </item>
-     <item row="3" column="1">
-      <widget class="QCheckBox" name="checkBox_useGenericName">
+      <item row="3" column="1">
+       <widget class="QCheckBox" name="checkBox_useGenericName">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
          <horstretch>0</horstretch>
@@ -110,11 +110,31 @@
        </property>
        <property name="text">
         <string/>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="label_6">
+        <property name="text">
+         <string>Show KDE KCMs</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QCheckBox" name="checkBox_showKdeKcms">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
    <item>
     <spacer name="verticalSpacer">
      <property name="orientation">

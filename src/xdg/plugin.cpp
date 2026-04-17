@@ -14,6 +14,7 @@
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <albert/desktopentryparser.h>
 #include <albert/logging.h>
 #include <albert/icon.h>
 #include <albert/messagebox.h>
@@ -27,6 +28,7 @@ static const auto ck_ignore_show_in_keys = "ignore_show_in_keys";
 static const auto ck_use_exec            = "use_exec";
 static const auto ck_use_generic_name    = "use_generic_name";
 static const auto ck_use_keywords        = "use_keywords";
+static const auto ck_show_kde_kcms       = "show_kde_kcms";
 
 const map<QString, QStringList> Plugin::exec_args  // command > ExecArg
 {
@@ -146,6 +148,7 @@ Plugin::Plugin()
     use_exec_            = s->value(ck_use_exec, false).value<bool>();
     use_generic_name_    = s->value(ck_use_generic_name, false).value<bool>();
     use_keywords_        = s->value(ck_use_keywords, false).value<bool>();
+    show_kde_kcms_       = s->value(ck_show_kde_kcms, false).value<bool>();
 
     // File watches
 
@@ -187,12 +190,127 @@ Plugin::Plugin()
             }
         }
 
+        // KCM deduplication: when show_kde_kcms is enabled, multiple desktop files can exist
+        // for the same KCM module targeting different Qt platforms (e.g. xcb vs wayland).
+        // Keep only the entry whose X-KDE-OnlyShowOnQtPlatforms best matches the current session,
+        // preferring: platform match > generic (no key) > alphabetically first id.
+        if (showKdeKcms())
+        {
+            // Detect the current Qt platform: QT_QPA_PLATFORM takes priority, then XDG_SESSION_TYPE.
+            auto normalizeQtPlatform = [](QString value) -> QString
+            {
+                value = value.toLower().trimmed();
+                if (value.startsWith(u"wayland"_s))
+                    return u"wayland"_s;
+                if (value == u"x11"_s || value == u"xcb"_s)
+                    return u"xcb"_s;
+                return {};
+            };
+
+            auto normalizeQtPlatformEnv = [&normalizeQtPlatform](QString value) -> QString
+            {
+                // QT_QPA_PLATFORM may contain a fallback list (e.g. "wayland;xcb").
+                value = value.toLower().trimmed().split(u';', Qt::SkipEmptyParts).value(0).trimmed();
+                return normalizeQtPlatform(value);
+            };
+
+            auto canonicalModuleId = [](QString module_id) -> QString
+            {
+                module_id = module_id.toLower().trimmed();
+                for (const auto &suffix : {u"_x11"_s, u"_xcb"_s, u"_wayland"_s})
+                    if (module_id.endsWith(suffix))
+                    {
+                        module_id.chop(suffix.size());
+                        break;
+                    }
+                return module_id;
+            };
+
+            QString qtPlatform = normalizeQtPlatformEnv(qEnvironmentVariable("QT_QPA_PLATFORM"));
+            if (qtPlatform.isEmpty())
+                qtPlatform = normalizeQtPlatform(qEnvironmentVariable("XDG_SESSION_TYPE"));
+
+            struct KcmEntry { QString id; QStringList platforms; };
+            map<QString, vector<KcmEntry>> kcm_by_module_id;  // canonical module id -> entries
+
+            for (const auto &[id, path] : desktop_files)
+            {
+                if (!id.startsWith(u"kcm_"_s))
+                    continue;
+
+                QString module_id = canonicalModuleId(id.mid(4));  // strip "kcm_" and normalize
+                try
+                {
+                    detail::DesktopEntryParser p(path);
+                    const auto root = u"Desktop Entry"_s;
+
+                    QStringList platforms;
+                    try
+                    {
+                        for (const auto &platform : p.getString(root, u"X-KDE-OnlyShowOnQtPlatforms"_s)
+                                                        .toLower()
+                                                        .split(u';', Qt::SkipEmptyParts))
+                            if (auto normalized = normalizeQtPlatform(platform.trimmed()); !normalized.isEmpty())
+                                platforms << normalized;
+                        platforms.removeDuplicates();
+                    }
+                    catch (const std::exception &) {}
+                    kcm_by_module_id[module_id].push_back({id, platforms});
+                }
+                catch (const std::exception &e)
+                {
+                    DEBG << u"KCM dedup: failed to parse '%1': %2"_s.arg(path, QString::fromLocal8Bit(e.what()));
+                }
+            }
+
+            QStringList ids_to_remove;
+            for (auto &[module_id, entries] : kcm_by_module_id)
+            {
+                if (entries.size() <= 1)
+                    continue;
+
+                // Sort explicitly so the alphabetical fallback is deterministic.
+                ranges::sort(entries, {}, &KcmEntry::id);
+
+                // Pick the best candidate for the current session.
+                QString preferred;
+
+                // 1. Exact platform match (X-KDE-OnlyShowOnQtPlatforms contains current platform)
+                if (!qtPlatform.isEmpty())
+                    for (const auto &e : entries)
+                        if (e.platforms.contains(qtPlatform))
+                        { preferred = e.id; break; }
+
+                // 2. Generic entry (no X-KDE-OnlyShowOnQtPlatforms key)
+                if (preferred.isEmpty())
+                    for (const auto &e : entries)
+                        if (e.platforms.isEmpty())
+                        { preferred = e.id; break; }
+
+                // 3. Alphabetically first id
+                if (preferred.isEmpty())
+                    preferred = entries.front().id;
+
+                for (const auto &e : entries)
+                    if (e.id != preferred)
+                    {
+                        DEBG << u"KCM dedup: skipping '%1' in favour of '%2' (module '%3')"_s
+                                    .arg(e.id, preferred, module_id);
+                        ids_to_remove << e.id;
+                    }
+            }
+
+            for (const auto &id : ids_to_remove)
+                desktop_files.erase(id);
+        }
+
         Application::ParseOptions po{
             .ignore_show_in_keys = ignoreShowInKeys(),
             .use_exec = useExec(),
             .use_generic_name = useGenericName(),
             .use_keywords = useKeywords(),
-            .use_non_localized_name = useNonLocalizedName()
+            .use_non_localized_name = useNonLocalizedName(),
+            .show_kde_kcms = showKdeKcms()
         };
 
         // Index the unique desktop files
@@ -305,6 +423,11 @@ QWidget *Plugin::buildConfigWidget()
                this,
                &Plugin::useKeywords,
                &Plugin::setUseKeywords);
+
+    bindWidget(ui.checkBox_showKdeKcms,
+               this,
+               &Plugin::showKdeKcms,
+               &Plugin::setShowKdeKcms);
 
     addBaseConfig(ui.formLayout);
 
@@ -443,5 +566,18 @@ void Plugin::setUseKeywords(bool v)
         settings()->setValue(ck_use_keywords, v);
         use_keywords_ = v;
         updateIndexItems();
+    }
+}
+
+bool Plugin::showKdeKcms() const { return show_kde_kcms_; }
+
+void Plugin::setShowKdeKcms(bool v)
+{
+    if (show_kde_kcms_ != v)
+    {
+        settings()->setValue(ck_show_kde_kcms, v);
+        show_kde_kcms_ = v;
+        updateIndexItems();
+        emit showKdeKcmsChanged(v);
     }
 }

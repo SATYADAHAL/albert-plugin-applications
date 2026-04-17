@@ -16,6 +16,7 @@ public:
         bool use_generic_name;
         bool use_keywords;
         bool use_non_localized_name;
+        bool show_kde_kcms;
     };
 
     Application(const QString &id, const QString &path, ParseOptions po);

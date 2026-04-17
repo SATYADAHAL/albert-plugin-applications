@@ -34,10 +34,11 @@ Application::Application(const QString &id, const QString &path, ParseOptions po
     if (p.getString(root_section, u"Type"_s) != u"Application"_s)
         throw runtime_error("Desktop entries of type other than 'Application' are not handled yet.");
 
-    // NoDisplay - boolean, must not be true
+    // NoDisplay - boolean, excluded unless explicitly allowed KDE KCM
     try {
         if (p.getBoolean(root_section, u"NoDisplay"_s))
-            throw runtime_error("Desktop entry excluded by 'NoDisplay'.");
+            if (!(po.show_kde_kcms && id.startsWith(u"kcm_"_s)))
+                throw runtime_error("Desktop entry excluded by 'NoDisplay'.");
     } catch (const out_of_range &) { }
 
     if (!po.ignore_show_in_keys)

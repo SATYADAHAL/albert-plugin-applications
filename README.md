@@ -7,6 +7,7 @@
   for `*.command` files is used.
 - **[XDG]** The environment variable `ALBERT_APPLICATIONS_COMMAND_PREFIX` is a semicolon-separated list of 
 tokens that will be prepended to the command line used to launch applications.
+- **[XDG]** Optional: show KDE KCM desktop entries (`kcm_*`) that are marked `NoDisplay=true`.
 
 ## API
 

@@ -37,6 +37,12 @@ public:
     bool useKeywords() const;
     void setUseKeywords(bool);
 
+    bool showKdeKcms() const;
+    void setShowKdeKcms(bool);
+
+signals:
+    void showKdeKcmsChanged(bool);
+
 private:
 
     static const std::map<QString, QStringList> exec_args;
@@ -49,5 +55,6 @@ private:
     bool use_exec_;
     bool use_generic_name_;
     bool use_keywords_;
+    bool show_kde_kcms_;
 
 };
